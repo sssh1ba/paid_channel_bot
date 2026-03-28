@@ -3,6 +3,7 @@ import logging
 import sqlite3
 import time
 import uuid
+import os
 from datetime import datetime
 
 import aiohttp
@@ -12,9 +13,10 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPri
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ============================== КОНФИГУРАЦИЯ ==============================
-BOT_TOKEN = "8639398874:AAGPpWq9Ebo-a7gzHWhASvxjom3KX3ZGphE"
-CRYPTOBOT_TOKEN = "557620:AAy5SsfiXy0qSpCE6VtOa7TbXLRxLenUhU3"
-CHANNEL_ID = -1003890843942
+# Токены читаются из переменных окружения (на Railway) или используются значения по умолчанию
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8639398874:AAGPpWq9Ebo-a7gzHWhASvxjom3KX3ZGphE")
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN", "557620:AAy5SsfiXy0qSpCE6VtOa7TbXLRxLenUhU3")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1003890843942"))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -233,6 +235,7 @@ def crypto_payment_keyboard(pay_url: str, invoice_id: int) -> InlineKeyboardMark
 
 def stars_payment_keyboard(payment_id: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.button(text="💸 Отправить счёт повторно", callback_data=f"new_stars_{payment_id}")
     builder.button(text="🔄 Проверить оплату", callback_data=f"check_stars_{payment_id}")
     builder.button(text="❌ Отменить платёж", callback_data=f"cancel_stars_{payment_id}")
     builder.button(text="◀️ Назад", callback_data="back_to_tariffs")
@@ -505,7 +508,6 @@ async def cancel_crypto_payment(callback: types.CallbackQuery):
 
 # ---------- ОПЛАТА TELEGRAM STARS ----------
 async def create_stars_invoice(bot: Bot, user_id: int, days: int) -> str:
-    """Создаёт инвойс и возвращает payment_id"""
     stars = 500 if days == 7 else 2000 if days == 30 else 5000
     prices = [LabeledPrice(label="Подписка", amount=stars)]
     payment_id = f"stars_{days}_{uuid.uuid4().hex}"
@@ -547,7 +549,7 @@ async def process_stars(callback: types.CallbackQuery):
         payment_id = await create_stars_invoice(callback.bot, user_id, days)
         # Удаляем исходное сообщение с выбором способа оплаты
         await callback.message.delete()
-        # Отправляем новое сообщение с кнопками проверки/отмены
+        # Отправляем новое сообщение с кнопками
         await callback.bot.send_message(
             user_id,
             "⏳ Ожидание оплаты...",
@@ -561,6 +563,34 @@ async def process_stars(callback: types.CallbackQuery):
         )
     await callback.answer()
 
+@dp.callback_query(lambda c: c.data.startswith("new_stars_"))
+async def create_new_stars_invoice(callback: types.CallbackQuery):
+    old_payment_id = callback.data.split("_")[2]
+    user_id = callback.from_user.id
+
+    pending = get_pending_stars(user_id)
+    old = next((p for p in pending if p["payment_id"] == old_payment_id), None)
+    if not old:
+        await callback.answer("Платёж уже обработан или не найден.", show_alert=True)
+        return
+
+    days = old["days"]
+    delete_pending_stars(old_payment_id)
+
+    try:
+        new_payment_id = await create_stars_invoice(callback.bot, user_id, days)
+        await callback.message.edit_text(
+            "✅ Создан новый счёт.",
+            reply_markup=stars_payment_keyboard(new_payment_id)
+        )
+    except Exception as e:
+        logger.exception("Failed to create new Stars invoice")
+        await callback.message.edit_text(
+            "❌ Не удалось создать новый счёт. Попробуйте позже.",
+            reply_markup=back_to_tariffs_keyboard()
+        )
+    await callback.answer()
+
 @dp.callback_query(lambda c: c.data.startswith("check_stars_"))
 async def check_stars_payment(callback: types.CallbackQuery):
     payment_id = callback.data.split("_")[2]
@@ -568,7 +598,7 @@ async def check_stars_payment(callback: types.CallbackQuery):
 
     row = get_stars_payment_status(payment_id)
     if not row:
-        await callback.answer("Платёж ещё не создан. Выберите тариф и оплатите заново.", show_alert=True)
+        await callback.answer("Платёж ещё не начинался. Нажмите «Отправить счёт повторно».", show_alert=True)
         return
 
     status, days = row
@@ -639,7 +669,6 @@ async def successful_payment(message: Message):
 
 # ============================== ВОССТАНОВЛЕНИЕ НЕЗАВЕРШЁННЫХ ПЛАТЕЖЕЙ ==============================
 async def restore_stars_payments(bot: Bot):
-    # Восстанавливаем оплаты, которые были подтверждены, но не обработаны
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT payment_id, user_id, days FROM stars_payments WHERE status = 'pending'")
@@ -650,7 +679,6 @@ async def restore_stars_payments(bot: Bot):
         await grant_access(bot, user_id, days)
         complete_stars_payment(payment_id)
 
-    # Удаляем старые pending Stars (неоплаченные более часа)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     now = int(time.time())
@@ -712,6 +740,9 @@ async def main():
     await restore_stars_payments(bot)
 
     asyncio.create_task(check_subscriptions(bot))
+
+    # Сбрасываем вебхук, чтобы избежать конфликтов с предыдущими сессиями
+    await bot.delete_webhook(drop_pending_updates=True)
 
     try:
         await dp.start_polling(bot)
