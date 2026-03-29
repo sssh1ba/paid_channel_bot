@@ -16,7 +16,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8639398874:AAGPpWq9Ebo-a7gzHWhASvxjom3KX3ZGphE")
 CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN", "557620:AAy5SsfiXy0qSpCE6VtOa7TbXLRxLenUhU3")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1003890843942"))
-ADMIN_ID = int(os.getenv("ADMIN_ID", "7234593897"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "7234593897"))   # твой ID
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -208,68 +208,77 @@ def get_all_users():
     return rows
 
 # ============================== КЛАВИАТУРЫ ==============================
-def main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню после /start"""
+def start_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🔥 ОТКРЫТЬ ДОСТУП", callback_data="open_access")
     builder.button(text="📸 Что внутри?", callback_data="what_inside")
-    builder.button(text="❓ Вопросы", callback_data="questions")
+    builder.button(text="❓ Вопросы", callback_data="faq")
     builder.adjust(1)
     return builder.as_markup()
 
 def tariffs_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура выбора тарифа"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔥 30 дней — $20 (лучший выбор)", callback_data="tariff_30")
     builder.button(text="7 дней — $5", callback_data="tariff_7")
-    builder.button(text="♾ НАВСЕГДА — $50", callback_data="tariff_forever")
-    builder.button(text="◀️ Назад", callback_data="back_to_main")
+    builder.button(text="🔥 30 дней — $15 (лучший выбор)", callback_data="tariff_30")
+    builder.button(text="♾ НАВСЕГДА — $30", callback_data="tariff_forever")
+    builder.button(text="◀️ Назад", callback_data="back_to_start")
     builder.adjust(1)
     return builder.as_markup()
 
 def payment_methods_keyboard(days: int) -> InlineKeyboardMarkup:
-    """Меню выбора способа оплаты"""
     builder = InlineKeyboardBuilder()
     builder.button(text="💸 Крипта (быстро)", callback_data=f"crypto_{days}")
     builder.button(text="⭐ Telegram Stars", callback_data=f"stars_{days}")
-    builder.button(text="◀️ Назад", callback_data="back_to_tariffs")
+    builder.button(text="◀️ Назад", callback_data="open_access")
     builder.adjust(1)
     return builder.as_markup()
 
 def crypto_payment_keyboard(pay_url: str, invoice_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура после создания счёта CryptoBot"""
     builder = InlineKeyboardBuilder()
     builder.button(text="💸 Оплатить", url=pay_url)
     builder.button(text="🔄 Проверить оплату", callback_data=f"check_crypto_{invoice_id}")
     builder.button(text="❌ Отменить", callback_data=f"cancel_crypto_{invoice_id}")
-    builder.button(text="◀️ Назад", callback_data="back_to_tariffs")
+    builder.button(text="◀️ Назад", callback_data="open_access")
     builder.adjust(1)
     return builder.as_markup()
 
 def stars_payment_keyboard(payment_id: str) -> InlineKeyboardMarkup:
-    """Клавиатура после отправки инвойса Stars"""
     builder = InlineKeyboardBuilder()
     builder.button(text="💸 Отправить счёт повторно", callback_data=f"new_stars_{payment_id}")
     builder.button(text="🔄 Проверить оплату", callback_data=f"check_stars_{payment_id}")
     builder.button(text="❌ Отменить", callback_data=f"cancel_stars_{payment_id}")
-    builder.button(text="◀️ Назад", callback_data="back_to_tariffs")
+    builder.button(text="◀️ Назад", callback_data="open_access")
     builder.adjust(1)
     return builder.as_markup()
 
-def back_to_main_keyboard() -> InlineKeyboardMarkup:
-    """Кнопка назад в главное меню"""
+def back_to_start_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="◀️ Назад", callback_data="back_to_main")
+    builder.button(text="◀️ Назад", callback_data="back_to_start")
     return builder.as_markup()
 
 # ============================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==============================
 async def notify_admin(bot: Bot, text: str):
-    """Отправляет сообщение администратору, если ADMIN_ID задан."""
     if ADMIN_ID and ADMIN_ID != 0:
         try:
             await bot.send_message(ADMIN_ID, text)
         except Exception as e:
             logger.error(f"Failed to notify admin: {e}")
+
+async def backup_db(bot: Bot):
+    while True:
+        await asyncio.sleep(86400)
+        if ADMIN_ID and ADMIN_ID != 0:
+            try:
+                with open(DB_NAME, "rb") as f:
+                    await bot.send_document(
+                        chat_id=ADMIN_ID,
+                        document=f,
+                        caption=f"📦 Бэкап базы данных {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                    )
+                logger.info("Backup sent to admin")
+            except Exception as e:
+                logger.exception("Failed to send backup")
+                await notify_admin(bot, f"❌ Ошибка при отправке бэкапа: {str(e)}")
 
 # ============================== ВЫДАЧА ДОСТУПА ==============================
 async def grant_access(bot: Bot, user_id: int, days: int, amount_usd: str = None):
@@ -291,28 +300,9 @@ async def grant_access(bot: Bot, user_id: int, days: int, amount_usd: str = None
 
     await bot.send_message(user_id, text)
 
-    # Уведомление администратору об успешной оплате
     if amount_usd:
         tariff_str = "навсегда" if days == 0 else f"{days} дней"
         await notify_admin(bot, f"💰 Новая оплата\n\n👤 Пользователь: {user_id}\n💵 Сумма: ${amount_usd}\n📆 Тариф: {tariff_str}")
-
-# ============================== ФОНОВАЯ ЗАДАЧА БЭКАПА ==============================
-async def backup_db(bot: Bot):
-    """Раз в сутки отправляет файл базы данных администратору."""
-    while True:
-        await asyncio.sleep(86400)  # 24 часа
-        if ADMIN_ID and ADMIN_ID != 0:
-            try:
-                with open(DB_NAME, "rb") as f:
-                    await bot.send_document(
-                        chat_id=ADMIN_ID,
-                        document=f,
-                        caption=f"📦 Бэкап базы данных {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                    )
-                logger.info("Backup sent to admin")
-            except Exception as e:
-                logger.exception("Failed to send backup")
-                await notify_admin(bot, f"❌ Ошибка при отправке бэкапа: {str(e)}")
 
 # ============================== ФОНОВАЯ ПРОВЕРКА ПЛАТЕЖЕЙ ==============================
 async def check_crypto_invoice(session: aiohttp.ClientSession, invoice_id: int) -> tuple[bool, str, str]:
@@ -332,7 +322,6 @@ async def check_crypto_invoice(session: aiohttp.ClientSession, invoice_id: int) 
                 logger.error(f"CryptoBot getInvoices HTTP {resp.status}: {await resp.text()}")
     except Exception as e:
         logger.exception("CryptoBot check failed")
-        await notify_admin(callback.bot, f"❌ Ошибка проверки CryptoBot: {str(e)}")
     return False, "", ""
 
 async def cancel_crypto_invoice(invoice_id: int) -> bool:
@@ -402,14 +391,13 @@ async def cmd_start(message: Message):
         "🔥 Приватный доступ к контенту Виолины\n\n"
         "— новые фото каждый день\n"
         "— доступ только через бота\n"
-        "— часть контента удаляется\n\n"
+        "— не весь контент остается, часть удаляется\n\n"
         "👇 выбери доступ",
-        reply_markup=main_menu_keyboard()
+        reply_markup=start_keyboard()
     )
 
 @dp.callback_query(lambda c: c.data == "open_access")
 async def open_access(callback: types.CallbackQuery):
-    # Показываем тарифы с индикацией "осталось мест"
     await callback.message.edit_text(
         "Выбери вариант доступа:\n\n"
         "💡 Большинство берут на 30 дней (выгоднее)\n"
@@ -423,63 +411,51 @@ async def what_inside(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "📸 Что внутри?\n\n"
         "Закрытый канал с эксклюзивным контентом:\n"
-        "• ежедневные свежие фото\n"
-        "• редкие видео\n"
-        "• общение в безопасной среде\n\n"
-        "Часть материалов удаляется через 24 часа.",
-        reply_markup=back_to_main_keyboard()
+        "🎯 ежедневные свежие фото\n"
+        "🎯 редкие видео\n"
+        "🎯 эксклюзивный временный контент\n\n"
+        "🔥 Часть материалов удаляется через 24 часа.",
+        reply_markup=back_to_start_keyboard()
     )
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data == "questions")
-async def questions(callback: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data == "faq")
+async def faq(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "❓ Часто задаваемые вопросы\n\n"
-        "Как получить доступ?\n"
+        "📌 Как получить доступ?\n"
         "→ выбери тариф и оплати удобным способом\n\n"
-        "Что за крипта?\n"
+        "📌 Что за крипта?\n"
         "→ принимаем USDT через @CryptoBot (быстро и безопасно)\n\n"
-        "Как попасть в канал?\n"
+        "📌 Как попасть в канал?\n"
         "→ после оплаты бот пришлёт одноразовую ссылку\n\n"
-        "Поддержка?\n"
-        "→ пиши @support_username (замени на реальный контакт)",
-        reply_markup=back_to_main_keyboard()
+        "📌 Поддержка?\n"
+        "→ пиши @Ev1LLyy",
+        reply_markup=back_to_start_keyboard()
     )
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data == "back_to_main")
-async def back_to_main(callback: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data == "back_to_start")
+async def back_to_start(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "🔥 Приватный доступ к контенту Виолины\n\n"
         "— новые фото каждый день\n"
         "— доступ только через бота\n"
-        "— часть контента удаляется\n\n"
+        "— не весь контент остается, часть удаляется\n\n"
         "👇 выбери доступ",
-        reply_markup=main_menu_keyboard()
+        reply_markup=start_keyboard()
     )
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data == "back_to_tariffs")
-async def back_to_tariffs(callback: types.CallbackQuery):
-    # Возврат к выбору тарифа
-    await callback.message.edit_text(
-        "Выбери вариант доступа:\n\n"
-        "💡 Большинство берут на 30 дней (выгоднее)\n"
-        "⏳ Осталось 12 мест по текущей цене",
-        reply_markup=tariffs_keyboard()
-    )
-    await callback.answer()
-
-# ---------- ВЫБОР ТАРИФА ----------
 @dp.callback_query(lambda c: c.data.startswith("tariff_"))
 async def process_tariff(callback: types.CallbackQuery):
     try:
         if callback.data == "tariff_7":
             days, amount_usd = 7, 5
         elif callback.data == "tariff_30":
-            days, amount_usd = 30, 20
+            days, amount_usd = 30, 15
         elif callback.data == "tariff_forever":
-            days, amount_usd = 0, 50
+            days, amount_usd = 0, 30
         else:
             await callback.answer("Неизвестный тариф", show_alert=True)
             return
@@ -489,11 +465,8 @@ async def process_tariff(callback: types.CallbackQuery):
         await notify_admin(callback.bot, f"❌ Ошибка в process_tariff: {str(e)}")
         return
 
-    # Запоминаем выбранный тариф для использования в оплате (не нужно сохранять, он передаётся в колбэк)
-    # Просто показываем способы оплаты
     await callback.message.edit_text(
-        f"Остался последний шаг 👇\n\n"
-        f"Выбери удобный способ оплаты:",
+        f"Остался последний шаг 👇\n\nВыбери удобный способ оплаты:",
         reply_markup=payment_methods_keyboard(days)
     )
     await callback.answer()
@@ -507,7 +480,7 @@ async def process_crypto(callback: types.CallbackQuery):
         await callback.answer("Неверный формат", show_alert=True)
         return
 
-    amount_usd = "5" if days == 7 else "20" if days == 30 else "50"
+    amount_usd = "5" if days == 7 else "15" if days == 30 else "30"
     user_id = callback.from_user.id
 
     pending_list = get_pending_crypto(user_id=user_id)
@@ -515,9 +488,8 @@ async def process_crypto(callback: types.CallbackQuery):
         if time.time() - pending["created_at"] < 7200:
             pay_url = f"https://t.me/CryptoBot?start=pay_{pending['invoice_id']}"
             await callback.message.edit_text(
-                f"⚡ Оплата почти завершена\n\n"
                 f"У вас уже есть активный неоплаченный счёт на сумму {amount_usd} USDT.\n"
-                f"Нажмите кнопку, чтобы оплатить или подождите.",
+                f"Пожалуйста, оплатите его или подождите.",
                 reply_markup=crypto_payment_keyboard(pay_url, pending['invoice_id'])
             )
             await callback.answer()
@@ -548,8 +520,7 @@ async def process_crypto(callback: types.CallbackQuery):
                         asyncio.create_task(monitor_pending_invoice(callback.bot, invoice_id, user_id, days, amount_usd))
 
                         await callback.message.edit_text(
-                            "⚡ Оплата почти завершена\n\n"
-                            "После оплаты ты сразу получишь доступ",
+                            "⚡ Оплата почти завершена\n\nПосле оплаты ты сразу получишь доступ",
                             reply_markup=crypto_payment_keyboard(pay_url, invoice_id)
                         )
                         return
@@ -559,13 +530,71 @@ async def process_crypto(callback: types.CallbackQuery):
                     raise Exception(f"HTTP {resp.status}")
         except Exception as e:
             logger.exception("CryptoBot createInvoice failed")
-            await callback.message.edit_text(f"❌ Ошибка при создании счёта. Попробуйте позже.\n{e}", reply_markup=back_to_tariffs_keyboard())
+            await callback.message.edit_text(f"❌ Ошибка при создании счёта. Попробуйте позже.\n{e}", reply_markup=back_to_start_keyboard())
             await notify_admin(callback.bot, f"❌ Ошибка CryptoBot: {str(e)}")
             await callback.answer()
 
+@dp.callback_query(lambda c: c.data.startswith("check_crypto_"))
+async def check_crypto_payment(callback: types.CallbackQuery):
+    invoice_id = int(callback.data.split("_")[2])
+    pending = get_pending_crypto(invoice_id=invoice_id)
+    if not pending:
+        await callback.answer("Платёж уже обработан или не найден.", show_alert=True)
+        return
+
+    async with aiohttp.ClientSession() as session:
+        paid, paid_amount, paid_asset = await check_crypto_invoice(session, invoice_id)
+        if not paid:
+            await callback.answer("Платёж пока не получен. Подождите или оплатите.", show_alert=True)
+            return
+
+        if is_crypto_processed(invoice_id):
+            await callback.answer("Платёж уже был обработан.", show_alert=True)
+            delete_pending_crypto(invoice_id)
+            return
+
+        days = pending["days"]
+        user_id = pending["user_id"]
+        amount_usd = pending["amount_usd"]
+
+        if paid_amount != amount_usd or paid_asset != "USDT":
+            logger.error(f"Invoice {invoice_id} paid with wrong amount/asset: {paid_amount} {paid_asset}, expected {amount_usd} USDT")
+            await callback.bot.send_message(user_id, "⚠️ Ошибка: сумма оплаты не совпадает. Свяжитесь с администратором.")
+            delete_pending_crypto(invoice_id)
+            await callback.answer("Ошибка суммы оплаты", show_alert=True)
+            await notify_admin(callback.bot, f"⚠️ Несовпадение суммы оплаты: ожидалось {amount_usd} USDT, получено {paid_amount} {paid_asset}")
+            return
+
+        await grant_access(callback.bot, user_id, days, amount_usd)
+        mark_crypto_processed(invoice_id, user_id)
+        delete_pending_crypto(invoice_id)
+        await callback.message.edit_text("✅ Оплата успешно получена! Доступ активирован.")
+        await callback.answer("Оплата подтверждена!", show_alert=True)
+
+@dp.callback_query(lambda c: c.data.startswith("cancel_crypto_"))
+async def cancel_crypto_payment(callback: types.CallbackQuery):
+    invoice_id = int(callback.data.split("_")[2])
+    pending = get_pending_crypto(invoice_id=invoice_id)
+    if not pending:
+        await callback.answer("Платёж уже обработан или не найден.", show_alert=True)
+        return
+
+    cancelled = await cancel_crypto_invoice(invoice_id)
+    if cancelled:
+        logger.info(f"User {callback.from_user.id} cancelled invoice {invoice_id}")
+    else:
+        logger.warning(f"Failed to cancel invoice {invoice_id} via API, but still deleting locally.")
+
+    delete_pending_crypto(invoice_id)
+    await callback.message.edit_text(
+        "❌ Платёж отменён. Вы можете выбрать другой тариф.",
+        reply_markup=tariffs_keyboard()
+    )
+    await callback.answer("Платёж отменён", show_alert=True)
+
 # ---------- ОПЛАТА TELEGRAM STARS ----------
 async def create_stars_invoice(bot: Bot, user_id: int, days: int) -> str:
-    stars = 500 if days == 7 else 2000 if days == 30 else 5000
+    stars = 500 if days == 7 else 1500 if days == 30 else 3000
     prices = [LabeledPrice(label="Подписка", amount=stars)]
     payment_id = f"stars_{days}_{uuid.uuid4().hex}"
 
@@ -597,16 +626,13 @@ async def process_stars(callback: types.CallbackQuery):
 
     user_id = callback.from_user.id
 
-    # Если есть старый pending – удаляем его
     old_pending = get_pending_stars(user_id)
     for p in old_pending:
         delete_pending_stars(p["payment_id"])
 
     try:
         payment_id = await create_stars_invoice(callback.bot, user_id, days)
-        # Удаляем исходное сообщение с выбором способа оплаты
         await callback.message.delete()
-        # Отправляем новое сообщение с кнопками
         await callback.bot.send_message(
             user_id,
             "⚡ Оплата почти завершена\n\nПосле оплаты ты сразу получишь доступ",
@@ -616,13 +642,118 @@ async def process_stars(callback: types.CallbackQuery):
         logger.exception("Failed to send Stars invoice")
         await callback.message.edit_text(
             "❌ Не удалось отправить счёт. Попробуйте позже.",
-            reply_markup=back_to_tariffs_keyboard()
+            reply_markup=back_to_start_keyboard()
         )
         await notify_admin(callback.bot, f"❌ Ошибка отправки Stars инвойса: {str(e)}")
     await callback.answer()
 
-# (Остальные обработчики: check_crypto, cancel_crypto, check_stars, cancel_stars, new_stars, pre_checkout, successful_payment – остаются без изменений, кроме текста кнопок. Они уже корректно используют обновлённые клавиатуры.)
-# Для краткости оставим их без изменений, но они уже есть в файле. Здесь они не приводятся для экономии места.
+@dp.callback_query(lambda c: c.data.startswith("new_stars_"))
+async def create_new_stars_invoice(callback: types.CallbackQuery):
+    old_payment_id = callback.data.split("_")[2]
+    user_id = callback.from_user.id
+
+    pending = get_pending_stars(user_id)
+    old = next((p for p in pending if p["payment_id"] == old_payment_id), None)
+    if not old:
+        await callback.answer("Платёж уже обработан или не найден.", show_alert=True)
+        return
+
+    days = old["days"]
+    delete_pending_stars(old_payment_id)
+
+    try:
+        new_payment_id = await create_stars_invoice(callback.bot, user_id, days)
+        await callback.message.edit_text(
+            "✅ Создан новый счёт.",
+            reply_markup=stars_payment_keyboard(new_payment_id)
+        )
+    except Exception as e:
+        logger.exception("Failed to create new Stars invoice")
+        await callback.message.edit_text(
+            "❌ Не удалось создать новый счёт. Попробуйте позже.",
+            reply_markup=back_to_start_keyboard()
+        )
+        await notify_admin(callback.bot, f"❌ Ошибка создания нового Stars инвойса: {str(e)}")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("check_stars_"))
+async def check_stars_payment(callback: types.CallbackQuery):
+    payment_id = callback.data.split("_")[2]
+    user_id = callback.from_user.id
+
+    row = get_stars_payment_status(payment_id)
+    if not row:
+        await callback.answer("Платёж ещё не начинался. Нажмите «Отправить счёт повторно».", show_alert=True)
+        return
+
+    status, days = row
+    if status == "completed":
+        amount_usd = "5" if days == 7 else "15" if days == 30 else "30"
+        await grant_access(callback.bot, user_id, days, amount_usd)
+        delete_pending_stars(payment_id)
+        await callback.message.edit_text("✅ Оплата успешно получена! Доступ активирован.")
+        await callback.answer("Оплата подтверждена!", show_alert=True)
+    else:
+        await callback.answer("Платёж пока не получен. Подождите или оплатите.", show_alert=True)
+
+@dp.callback_query(lambda c: c.data.startswith("cancel_stars_"))
+async def cancel_stars_payment(callback: types.CallbackQuery):
+    payment_id = callback.data.split("_")[2]
+    pending = get_pending_stars(callback.from_user.id)
+    if not any(p["payment_id"] == payment_id for p in pending):
+        await callback.answer("Платёж уже обработан или не найден.", show_alert=True)
+        return
+
+    delete_pending_stars(payment_id)
+    await callback.message.edit_text(
+        "❌ Платёж отменён. Вы можете выбрать другой тариф.",
+        reply_markup=tariffs_keyboard()
+    )
+    await callback.answer("Платёж отменён", show_alert=True)
+
+@dp.pre_checkout_query()
+async def pre_checkout(query: PreCheckoutQuery):
+    try:
+        payload = query.invoice_payload
+        if payload.startswith("stars_"):
+            parts = payload.split("_")
+            days = int(parts[1])
+            payment_id = parts[2] if len(parts) > 2 else payload
+            add_stars_payment(payment_id, query.from_user.id, days)
+    except Exception as e:
+        logger.exception("Failed to save pending Stars payment")
+        await notify_admin(query.bot, f"❌ Ошибка в pre_checkout: {str(e)}")
+    await query.answer(ok=True)
+
+@dp.message(lambda message: message.successful_payment is not None)
+async def successful_payment(message: Message):
+    payment = message.successful_payment
+    payload = payment.invoice_payload
+    if not payload.startswith("stars_"):
+        return
+    try:
+        parts = payload.split("_")
+        days = int(parts[1])
+        payment_id = parts[2] if len(parts) > 2 else payload
+    except (IndexError, ValueError):
+        logger.error(f"Invalid stars payload: {payload}")
+        return
+
+    user_id = message.from_user.id
+    amount_usd = "5" if days == 7 else "15" if days == 30 else "30"
+
+    await grant_access(message.bot, user_id, days, amount_usd)
+    complete_stars_payment(payment_id)
+    delete_pending_stars(payment_id)
+    await message.answer("✅ Оплата получена! Доступ к каналу активирован.")
+    try:
+        await message.bot.edit_message_reply_markup(
+            chat_id=user_id,
+            message_id=message.message_id - 1,
+            reply_markup=None
+        )
+    except:
+        pass
 
 # ============================== ВОССТАНОВЛЕНИЕ НЕЗАВЕРШЁННЫХ ПЛАТЕЖЕЙ ==============================
 async def restore_stars_payments(bot: Bot):
@@ -633,7 +764,8 @@ async def restore_stars_payments(bot: Bot):
     conn.close()
     for payment_id, user_id, days in rows:
         logger.info(f"Restoring pending Stars payment {payment_id} for user {user_id}")
-        await grant_access(bot, user_id, days, None)
+        amount_usd = "5" if days == 7 else "15" if days == 30 else "30"
+        await grant_access(bot, user_id, days, amount_usd)
         complete_stars_payment(payment_id)
 
     conn = sqlite3.connect(DB_NAME)
@@ -699,8 +831,9 @@ async def main():
     asyncio.create_task(check_subscriptions(bot))
     asyncio.create_task(backup_db(bot))
 
-    # Сбрасываем вебхук, чтобы избежать конфликтов с предыдущими сессиями
+    # Сброс вебхука и небольшая пауза для устранения конфликтов
     await bot.delete_webhook(drop_pending_updates=True)
+    await asyncio.sleep(1)
 
     try:
         await dp.start_polling(bot)
